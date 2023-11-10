@@ -13,8 +13,8 @@ use crate::{
     extensions::{ExtensionFactory, Extensions},
     registry::{MetaType, Registry},
     schema::{prepare_request, SchemaEnvInner},
-    Data, Executor, IntrospectionMode, QueryEnv, Request, Response, SDLExportOptions, SchemaEnv,
-    ServerError, ServerResult, ValidationMode,
+    CacheControl, Data, Executor, IntrospectionMode, QueryEnv, Request, Response, SDLExportOptions,
+    SchemaEnv, ServerError, ServerResult, ValidationMode, Validator,
 };
 
 /// Dynamic schema builder
@@ -341,25 +341,32 @@ impl Schema {
         resp
     }
 
+    /// Validate a GraphQL query.
+    pub async fn validate(
+        &self,
+        request: Request,
+    ) -> Result<(QueryEnv, CacheControl), Vec<ServerError>> {
+        let extensions = self.create_extensions(Default::default());
+        prepare_request(
+            extensions,
+            request,
+            Default::default(),
+            &self.0.env.registry,
+            self.0.validation_mode,
+            self.0.recursive_depth,
+            self.0.complexity,
+            self.0.depth,
+        )
+        .await
+    }
+
     /// Execute a GraphQL query.
     pub async fn execute(&self, request: impl Into<DynamicRequest>) -> Response {
         let request = request.into();
         let extensions = self.create_extensions(Default::default());
         let request_fut = {
-            let extensions = extensions.clone();
             async move {
-                match prepare_request(
-                    extensions,
-                    request.inner,
-                    Default::default(),
-                    &self.0.env.registry,
-                    self.0.validation_mode,
-                    self.0.recursive_depth,
-                    self.0.complexity,
-                    self.0.depth,
-                )
-                .await
-                {
+                match self.validate(request.inner).await {
                     Ok((env, cache_control)) => {
                         let fut = async {
                             self.execute_once(env.clone(), &request.root_value)
@@ -463,6 +470,16 @@ impl Executor for Schema {
     ) -> BoxStream<'static, Response> {
         Schema::execute_stream_with_session_data(self, request, session_data.unwrap_or_default())
             .boxed()
+    }
+}
+
+#[async_trait::async_trait]
+impl Validator for Schema {
+    async fn validate(
+        &self,
+        request: Request,
+    ) -> Result<(QueryEnv, CacheControl), Vec<ServerError>> {
+        Schema::validate(self, request).await
     }
 }
 

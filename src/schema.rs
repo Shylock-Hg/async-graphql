@@ -24,7 +24,7 @@ use crate::{
     validation::{check_rules, ValidationMode},
     BatchRequest, BatchResponse, CacheControl, ContextBase, EmptyMutation, EmptySubscription,
     Executor, InputType, ObjectType, OutputType, QueryEnv, Request, Response, ServerError,
-    ServerResult, SubscriptionType, Variables,
+    ServerResult, SubscriptionType, Validator, Variables,
 };
 
 /// Introspection mode
@@ -473,25 +473,32 @@ where
         resp
     }
 
+    /// Validate a GraphQL query
+    pub async fn validate(
+        &self,
+        request: Request,
+    ) -> Result<(QueryEnv, CacheControl), Vec<ServerError>> {
+        let extensions = self.create_extensions(Default::default());
+        prepare_request(
+            extensions,
+            request,
+            Default::default(),
+            &self.0.env.registry,
+            self.0.validation_mode,
+            self.0.recursive_depth,
+            self.0.complexity,
+            self.0.depth,
+        )
+        .await
+    }
+
     /// Execute a GraphQL query.
     pub async fn execute(&self, request: impl Into<Request>) -> Response {
         let request = request.into();
         let extensions = self.create_extensions(Default::default());
         let request_fut = {
-            let extensions = extensions.clone();
             async move {
-                match prepare_request(
-                    extensions,
-                    request,
-                    Default::default(),
-                    &self.0.env.registry,
-                    self.0.validation_mode,
-                    self.0.recursive_depth,
-                    self.0.complexity,
-                    self.0.depth,
-                )
-                .await
-                {
+                match self.validate(request).await {
                     Ok((env, cache_control)) => {
                         let fut = async {
                             self.execute_once(env.clone())
@@ -610,6 +617,21 @@ where
     ) -> BoxStream<'static, Response> {
         Schema::execute_stream_with_session_data(&self, request, session_data.unwrap_or_default())
             .boxed()
+    }
+}
+
+#[async_trait::async_trait]
+impl<Query, Mutation, Subscription> Validator for Schema<Query, Mutation, Subscription>
+where
+    Query: ObjectType + 'static,
+    Mutation: ObjectType + 'static,
+    Subscription: SubscriptionType + 'static,
+{
+    async fn validate(
+        &self,
+        request: Request,
+    ) -> Result<(QueryEnv, CacheControl), Vec<ServerError>> {
+        Schema::validate(self, request).await
     }
 }
 

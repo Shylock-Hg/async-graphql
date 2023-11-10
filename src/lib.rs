@@ -193,6 +193,7 @@ mod response;
 mod schema;
 mod subscription;
 mod validation;
+mod validator;
 
 pub mod context;
 #[cfg(feature = "dataloader")]
@@ -253,6 +254,7 @@ pub use static_assertions;
 pub use subscription::SubscriptionType;
 pub use types::*;
 pub use validation::{ValidationMode, ValidationResult, VisitorContext};
+pub use validator::Validator;
 pub use validators::CustomValidator;
 
 /// An alias of [async_graphql::Error](struct.Error.html). Present for backward
